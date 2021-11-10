@@ -8,11 +8,40 @@ mod os;
 fn main() {
 	println!("running as pid {}", syscall::getpid());
 
+	let mut args = std::env::args();
+	// We ignore the first argument, which is canonically the binary name, and is
+	// pretty much useless to us.
+	args.next();
+
+	let command = match args.next() {
+		Some(s) => s,
+		None => {
+			println!("\x1b[1;31mfailure\x1b[0m: expected a command name");
+			return;
+		},
+	};
+
+	let cmd = match std::ffi::CString::new(command) {
+		Ok(cs) => cs,
+		Err(_) => {
+			println!("\x1b[1;31mfailure\x1b[0m: command name contains NUL byte, which is not allowed");
+			return;
+		},
+	};
+
+	// The rest of the arguments are going to be passed to the command.
+	let arguments = args.map(|s| std::ffi::CString::new(s))
+		.flatten()
+		.collect::<Vec<_>>();
+
 	match os::clone(0) {
 		0 => {
 			println!("\x1b[1;32msuccess\x1b[0m: we're in the forked process");
 
-			let mut argv = [b"/bin/ls\0".as_ptr() as _, core::ptr::null()];
+			let mut args = Vec::new();
+			args.push(cmd.as_ptr());
+			args.extend(arguments.iter().map(|s| s.as_ptr()));
+			args.push(core::ptr::null());
 
 			let mut envp = [
 				b"HOME=/home/lyna\0".as_ptr() as _,
@@ -22,7 +51,7 @@ fn main() {
 			];
 
 			let result = unsafe {
-				syscall::execve(b"/bin/bash\0".as_ptr() as _, argv.as_mut_ptr(), envp.as_mut_ptr())
+				syscall::execve(cmd.as_ptr(), args.as_mut_ptr(), envp.as_mut_ptr())
 			};
 
 			if result == -1 {
