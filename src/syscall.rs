@@ -66,6 +66,25 @@ unsafe fn syscall4(n: i64, a: i64, b: i64, c: i64, d: i64) -> i64 {
 	return ret;
 }
 
+#[inline]
+unsafe fn syscall5(n: i64, a: i64, b: i64, c: i64, d: i64, e: i64) -> i64 {
+	let mut ret: i64;
+
+	asm!(
+		"syscall",
+		inout("rax") n => ret,
+		in("rdi") a,
+		in("rsi") b,
+		in("rdx") c,
+		in("r10") d,
+		in("r8") e,
+		lateout("rcx") _,
+		lateout("r11") _,
+	);
+
+	return ret;
+}
+
 #[repr(i64)]
 #[non_exhaustive]
 pub enum Syscall {
@@ -73,7 +92,10 @@ pub enum Syscall {
 	Execve = 59,
 	Wait4 = 61,
 	Chdir = 80,
+	Setuid = 105,
+	Setgid = 106,
 	Chroot = 161,
+	Mount = 165,
 	Sethostname = 170,
 	Clone3 = 435,
 }
@@ -86,7 +108,6 @@ pub fn getpid() -> i32 {
 	};
 }
 
-
 /// # Safety
 /// This is **VERY VERY VERY** unsafe. Provide invalid pointer to argv or envp
 /// and anything can happen. Forget to terminate argv or envp with null pointer
@@ -98,8 +119,18 @@ pub unsafe fn execve(pathname: *const i8, argv: *mut *const i8, envp: *mut *cons
 }
 
 #[inline]
-pub unsafe fn sethostname(name: *const i8, len: usize) -> i32 {
-	return syscall2(Syscall::Sethostname as i64, name as _, len as _) as i32;
+pub unsafe fn chdir(path: *const i8) -> i32 {
+	return syscall1(Syscall::Chdir as i64, path as _) as i32;
+}
+
+#[inline]
+pub unsafe fn setuid(uid: i32) -> i32 {
+	return syscall1(Syscall::Setuid as i64, uid as _) as i32;
+}
+
+#[inline]
+pub unsafe fn setgid(uid: i32) -> i32 {
+	return syscall1(Syscall::Setgid as i64, uid as _) as i32;
 }
 
 #[inline]
@@ -108,8 +139,18 @@ pub unsafe fn chroot(path: *const i8) -> i32 {
 }
 
 #[inline]
-pub unsafe fn chdir(path: *const i8) -> i32 {
-	return syscall1(Syscall::Chdir as i64, path as _) as i32;
+pub unsafe fn sethostname(name: *const i8, len: usize) -> i32 {
+	return syscall2(Syscall::Sethostname as i64, name as _, len as _) as i32;
+}
+
+// -=- mount() related stuff. -=-
+
+pub const MS_REC: u64 = 16384;
+pub const MS_PRIVATE: u64 = 1 << 18;
+
+#[inline]
+pub unsafe fn mount(source: *const i8, target: *const i8, fstype: *const i8, flags: u64, data: *const std::ffi::c_void) -> i32 {
+	return syscall5(Syscall::Mount as i64, source as _, target as _, fstype as _, flags as _, data as _) as i32;
 }
 
 // -=- wait4() related stuff. -=-
@@ -150,7 +191,9 @@ pub unsafe fn wait4(pid: i32, wstatus: *mut i32, options: i32, rusage: *mut rusa
 
 // -=- clone3() related stuff. -=-
 
+pub const CLONE_NEWNS: u64 = 0x00020000;
 pub const CLONE_NEWUTS: u64 = 0x04000000;
+pub const CLONE_NEWPID: u64 = 0x20000000;
 pub const CLONE_NEWUSER: u64 = 0x10000000;
 
 #[allow(non_camel_case_types)]

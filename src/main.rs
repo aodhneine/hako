@@ -4,13 +4,7 @@ mod syscall;
 mod os;
 
 // hako <cmd> <args>
-
-/// Mapping of ids from child to the parent.
-struct IdMapping {
-	container: u32,
-	host: u32,
-	length: u32,
-}
+// hako --rootfs <path> <cmd> <args>
 
 fn main() {
 	println!("running as pid {}", syscall::getpid());
@@ -41,13 +35,7 @@ fn main() {
 		.flatten()
 		.collect::<Vec<_>>();
 
-	let uid_mappings = [IdMapping {
-		container: 0,
-		host: 1000,
-		length: 1
-	}];
-
-	match os::clone(syscall::CLONE_NEWUTS | syscall::CLONE_NEWUSER) {
+	match os::clone(syscall::CLONE_NEWUTS | syscall::CLONE_NEWPID | syscall::CLONE_NEWUSER | syscall::CLONE_NEWNS) {
 		0 => {
 			println!("\x1b[1;32msuccess\x1b[0m: we're in the forked process");
 
@@ -56,20 +44,55 @@ fn main() {
 				syscall::sethostname("container".as_ptr() as _, 9)
 			};
 
-			if result == -1 {
+			if result < 0 {
 				println!("\x1b[1;33mwarning\x1b[0m: failed to set hostname");
 			}
 
+			// We need to disable setgroups syscall, as since Linux 3.6 writing to
+			// gid_map with it enabled is disallowed.
+			std::fs::write("/proc/self/setgroups", "deny").unwrap();
+
 			// After this, we are root in the container.
+			std::fs::write("/proc/self/gid_map", "0 1000 1\n").unwrap();
+			dbg!(std::fs::read_to_string("/proc/self/gid_map")).unwrap();
+
 			std::fs::write("/proc/self/uid_map", "0 1000 1\n").unwrap();
 			dbg!(std::fs::read_to_string("/proc/self/uid_map")).unwrap();
+
+			// Set our group and user ids in the container to root.
+			let result = unsafe {
+				syscall::setgid(0)
+			};
+
+			if result < 0 {
+				println!("\x1b[1;33mwarning\x1b[0m: failed to set gid to 0 (errno {})", -result);
+			}
+
+			let result = unsafe {
+				syscall::setuid(0)
+			};
+
+			if result < 0 {
+				println!("\x1b[1;33mwarning\x1b[0m: failed to set uid to 0 (errno {})", -result);
+			}
+
+			// Systemd mounts / with --shared, but unsharing doesn't unshare mount
+			// points mounted with --shared, so we must mark / as MS_PRIVATE, which
+			// replicates the behaviour of standard unshare(1) command.
+			let result = unsafe {
+				syscall::mount("none\0".as_ptr() as _, "/\0".as_ptr() as _, std::ptr::null(), syscall::MS_REC | syscall::MS_PRIVATE, std::ptr::null())
+			};
+
+			if result < 0 {
+				println!("\x1b[1;33mwarning\x1b[0m: failed to mount / as private (errno {})", -result);
+			}
 
 			// Change root directory to the image one.
 			let result = unsafe {
 				syscall::chroot("/home/lyna/var/pods/archfs\0".as_ptr() as _)
 			};
 
-			if result == -1 {
+			if result < 0 {
 				println!("\x1b[1;33mwarning\x1b[0m: failed to change root");
 			}
 
@@ -78,8 +101,17 @@ fn main() {
 				syscall::chdir("/\0".as_ptr() as _)
 			};
 
-			if result == -1 {
+			if result < 0 {
 				println!("\x1b[1;33mwarning\x1b[0m: failed to change directory");
+			}
+
+			// Mount procfs at /proc.
+			let result = unsafe {
+				syscall::mount("proc\0".as_ptr() as _, "/proc\0".as_ptr() as _, "proc\0".as_ptr() as _, 0, std::ptr::null())
+			};
+
+			if result < 0 {
+				println!("\x1b[1;33mwarning\x1b[0m: failed to mount procfs at /proc (errno {})", -result);
 			}
 
 			let mut args = Vec::new();
@@ -98,7 +130,7 @@ fn main() {
 				syscall::execve(cmd.as_ptr(), args.as_mut_ptr(), envp.as_mut_ptr())
 			};
 
-			if result == -1 {
+			if result < 0 {
 				println!("\x1b[1;31mfailure\x1b[0m: failed to call execve");
 				return;
 			}
