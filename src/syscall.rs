@@ -9,6 +9,13 @@ unsafe fn syscall0(n: i64) -> i64 {
 }
 
 #[inline]
+unsafe fn syscall1(n: i64, a: i64) -> i64 {
+	let mut ret: i64;
+	asm!("syscall", inout("rax") n => ret, in("rdi") a, lateout("rcx") _, lateout("r11") _);
+	return ret;
+}
+
+#[inline]
 unsafe fn syscall2(n: i64, a: i64, b: i64) -> i64 {
 	let mut ret: i64;
 
@@ -65,6 +72,9 @@ pub enum Syscall {
 	Getpid = 39,
 	Execve = 59,
 	Wait4 = 61,
+	Chdir = 80,
+	Chroot = 161,
+	Sethostname = 170,
 	Clone3 = 435,
 }
 
@@ -87,6 +97,21 @@ pub unsafe fn execve(pathname: *const i8, argv: *mut *const i8, envp: *mut *cons
 	return syscall3(Syscall::Execve as i64, pathname as _, argv as _, envp as _) as i32;
 }
 
+#[inline]
+pub unsafe fn sethostname(name: *const i8, len: usize) -> i32 {
+	return syscall2(Syscall::Sethostname as i64, name as _, len as _) as i32;
+}
+
+#[inline]
+pub unsafe fn chroot(path: *const i8) -> i32 {
+	return syscall1(Syscall::Chroot as i64, path as _) as i32;
+}
+
+#[inline]
+pub unsafe fn chdir(path: *const i8) -> i32 {
+	return syscall1(Syscall::Chdir as i64, path as _) as i32;
+}
+
 // -=- wait4() related stuff. -=-
 
 #[allow(non_camel_case_types)]
@@ -100,22 +125,22 @@ pub struct timeval {
 #[allow(non_camel_case_types)]
 #[repr(C)]
 pub struct rusage {
-	ru_utime: timeval,
-	ru_stime: timeval,
-	ru_maxrss: i64,
-	ru_ixrss: i64,
-	ru_idrss: i64,
-	ru_isrss: i64,
-	ru_minflt: i64,
-	ru_majlft: i64,
-	ru_nswap: i64,
-	ru_inblock: i64,
-	ru_oublock: i64,
-	ru_msgsnd: i64,
-	ru_msgrcv: i64,
-	ru_nsignals: i64,
-	ru_nvcsw: i64,
-	ru_nivcsw: i64,
+	pub ru_utime: timeval,
+	pub ru_stime: timeval,
+	pub ru_maxrss: i64,
+	pub ru_ixrss: i64,
+	pub ru_idrss: i64,
+	pub ru_isrss: i64,
+	pub ru_minflt: i64,
+	pub ru_majlft: i64,
+	pub ru_nswap: i64,
+	pub ru_inblock: i64,
+	pub ru_oublock: i64,
+	pub ru_msgsnd: i64,
+	pub ru_msgrcv: i64,
+	pub ru_nsignals: i64,
+	pub ru_nvcsw: i64,
+	pub ru_nivcsw: i64,
 }
 
 #[inline]
@@ -124,6 +149,9 @@ pub unsafe fn wait4(pid: i32, wstatus: *mut i32, options: i32, rusage: *mut rusa
 }
 
 // -=- clone3() related stuff. -=-
+
+pub const CLONE_NEWUTS: u64 = 0x04000000;
+pub const CLONE_NEWUSER: u64 = 0x10000000;
 
 #[allow(non_camel_case_types)]
 #[repr(C)]

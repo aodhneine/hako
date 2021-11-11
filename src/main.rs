@@ -3,7 +3,14 @@
 mod syscall;
 mod os;
 
-// hako run <cmd> <args>
+// hako <cmd> <args>
+
+/// Mapping of ids from child to the parent.
+struct IdMapping {
+	container: u32,
+	host: u32,
+	length: u32,
+}
 
 fn main() {
 	println!("running as pid {}", syscall::getpid());
@@ -34,9 +41,46 @@ fn main() {
 		.flatten()
 		.collect::<Vec<_>>();
 
-	match os::clone(0) {
+	let uid_mappings = [IdMapping {
+		container: 0,
+		host: 1000,
+		length: 1
+	}];
+
+	match os::clone(syscall::CLONE_NEWUTS | syscall::CLONE_NEWUSER) {
 		0 => {
 			println!("\x1b[1;32msuccess\x1b[0m: we're in the forked process");
+
+			// Change hostname so we know who we are.
+			let result = unsafe {
+				syscall::sethostname("container".as_ptr() as _, 9)
+			};
+
+			if result == -1 {
+				println!("\x1b[1;33mwarning\x1b[0m: failed to set hostname");
+			}
+
+			// After this, we are root in the container.
+			std::fs::write("/proc/self/uid_map", "0 1000 1\n").unwrap();
+			dbg!(std::fs::read_to_string("/proc/self/uid_map")).unwrap();
+
+			// Change root directory to the image one.
+			let result = unsafe {
+				syscall::chroot("/home/lyna/var/pods/archfs\0".as_ptr() as _)
+			};
+
+			if result == -1 {
+				println!("\x1b[1;33mwarning\x1b[0m: failed to change root");
+			}
+
+			// Move to / to avoid issues with invalid path.
+			let result = unsafe {
+				syscall::chdir("/\0".as_ptr() as _)
+			};
+
+			if result == -1 {
+				println!("\x1b[1;33mwarning\x1b[0m: failed to change directory");
+			}
 
 			let mut args = Vec::new();
 			args.push(cmd.as_ptr());
